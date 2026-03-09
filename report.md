@@ -131,11 +131,11 @@ We ran the same benchmarks with and without the `complaint_type` string field to
 - **Without strings:** Phase 1 memory = 1,024 MB
 - **With one string:** Phase 1 memory = 2,304 MB
 
-One `std::string` field doubled memory. In C++, each `std::string` stores a pointer to heap-allocated character data. For 20M records, that means 20M separate heap allocations scattered across memory.
+One std::string field uses twice as much memory. Each std::string in C++ uses a pointer to data located in memory on the heap. With 20 million records, this means there are 20 million separate heap allocations, scattered throughout memory.
 
-In Phase 3, Q2_string took 38.6 ms while Q5_centroid took 8.6 ms. The 4.5x gap comes from two things: first, Q2 is a filter that returns 2.3M matching indices (each one a `push_back`), while Q5 is a reduction with no output vector. Second, `double` values in a `vector<double>` sit contiguously, so the CPU prefetches them efficiently. String contents are scattered across the heap - each comparison chases a pointer to a random memory location.
+In Phase 3, Q2_string took 38.6 ms, compared to Q5_centroid at 8.6 ms. The difference is 4.5 times. The explanation is twofold. First, Q2 is a filtering query, returning only 2.3 million of those indices, which it adds one by one with push_back. Q5 is a reduction query, returning no output vector. Second, doubles in a vector of doubles are contiguous, so the CPU can prefetch these. String data, however, is scattered across the heap, with every comparison requiring a pointer to a random location in memory.
 
-To isolate just the string cost, compare Q2_string (38.6 ms, 2.3M hits) against Q4_date (37.3 ms, 3.2M hits). Q4 returns more results but runs at the same speed, because it scans a contiguous `uint32_t` array instead of chasing heap pointers. The push_back cost is similar for both, so the difference in scan speed is hidden - but Q4 is doing more output work and still keeping up, which tells us the string scan is genuinely slower.
+To find how long it takes to simply scan strings, let’s compare Q2_string at 38.6 ms, returning 2.3M hits, with Q4_date at 37.3 ms, returning 3.2M hits. Q4 does more work, including writing its output vector, yet keeps up with Q2. The time to do push_back is roughly the same in both cases. The difference in time is in the scanning. But in this case, it’s not just in the scanning—Q4 is doing more work than Q2. That means that string scanning is really slower.
 
 ## 7. Failed Attempts & Lessons Learned
 
@@ -151,7 +151,7 @@ The first parser used hardcoded column indices. Socrata exports have different c
 First centroid implementation used `omp critical` - all 8 threads competed for one lock on every iteration. Scaling was terrible. Switching to `omp reduction(+:)` let each thread accumulate locally and merge once at the end. This alone took centroid from ~80 ms to ~28 ms in Phase 2.
 
 ### 7.4 SoA - Not Always Faster
-We expected SoA to improve everything. It didn't. GeoBox got slightly worse because lat and lon got separated into different arrays. Filter queries with millions of hits didn't improve much because the bottleneck shifted from scanning to output construction (push_back). SoA is great for reductions and single-column scans, but not for multi-column queries.
+We expected SoA would speed everything up, but that did not happen. GeoBox slowed a bit due to the fact that latitude and longitude were placed in separate arrays. Despite the fact that filter queries returned millions of results, the speedup was minimal, and the bottleneck moved from the scan to the construction of the output (push_back). SoA is great for reduction and single-column scans, but fails for multi-column queries.
 
 ### 7.5 `std::move` Semantics
 Early code used `push_back(rec)` which copies the string field for every record - 20M heap allocations. Using `push_back(std::move(rec))` transfers ownership without copying.
